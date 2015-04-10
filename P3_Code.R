@@ -1,109 +1,147 @@
+#R interface to the libstemmer librarry
+library("SnowballC")
+#twitter stream library
 library(streamR)
+#string library that ensures all functions handle all errors,NAs,etc
 library(stringr)
+#framework for text mining in R
 library(tm)
+#provides an interface to MOA(Massive Online Analysis) functionality from R
 library(RMOA)
 
-update_model <- function(mymodel, dtm_row, row_class, i) {
+#function to accept current model, new tweet and its correct classification and return the updated model
+get_updated_model <- function(mymodel, dtm_row, row_class, i) {
   dtm_df <- as.data.frame(as.matrix(dtm_row))
-  #print(row_class)
   dtm_df[i,"label"]= row_class
-  #print(dtm_df[,211])
   datastream <- datastream_dataframe(data=dtm_df)
-  
-  mymodel <- trainMOA(model = mymodel, formula=label~., data = datastream, reset = FALSE, trace = TRUE)
-  
+  mymodel <- trainMOA(model = mymodel, formula=label~., data = datastream, reset = FALSE, trace = FALSE)
   return(mymodel)
 }
 
+#function to return the tweets required. Specify the timeout
+get_love_hate_tweets <- function(time){
+	#Only get those tweets with love or hate in them
+	filterStream("new_tweets.json", track = c("love", "hate"), timeout = time, oauth = my_oauth)
+	#data frame of tweets from the json file generated
+	tweets.df <- parseTweets("new_tweets.json", simplify = TRUE)
+  file.remove("new_tweets.json")
+  
+	return(tweets.df);
+}
+
+#remove excessive white spaces,symbols and return text
+get_tweet_text <- function(tweets.df){
+	return (data.frame(str_replace_all(train_tweets.df$text,"[^[:graph:]]", " ")))
+}
+
+#Twitter AUthentication file that needs to be pregenerated. See file Generate_OAuth_Token.R
 load("my_oauth.Rdata")
-filterStream("new_tweets.json", track = c("love", "hate"), timeout = 10, oauth = my_oauth)
-tweets.df <- parseTweets("new_tweets.json", simplify = TRUE)
-index <- sample(1:dim(tweets.df)[1])
 
-train_tweets <- tweets.df[index[1:floor(dim(tweets.df)[1]/2)], ]
-test_tweets <- tweets.df[index[((ceiling(dim(tweets.df)[1]/2)) + 1):dim(tweets.df)[1]], ]
-train_tweets_new.df <- data.frame(str_replace_all(train_tweets$text,"[^[:graph:]]", " "))
-test_tweets_new.df <- data.frame(str_replace_all(test_tweets$text,"[^[:graph:]]", " "))
+#data frame of tweets
+train_tweets.df=get_love_hate_tweets(10);
 
-love <- "love"
-hate <- "hate"
-get_sentiment <- function(x) { if(str_detect(x, "love")) love else hate }
+#data frame with the text of the tweets
+train_tweets_new.df <- get_tweet_text(train_tweets.df);
 
+#function to return the tweet's classification
+get_sentiment <- function(x) {
+  love <- "love"
+  hate <- "hate"
+  
+  if(str_detect(x, "love")) {
+    love 
+  }
+  else {
+    hate
+  }
+}
+
+#get the classification of each tweet
 train_org_class.df <- data.frame(list(apply(train_tweets_new.df, 1, function(x) get_sentiment(tolower(gsub("[()]", "", x))) )))
-test_org_class.df <- data.frame(list(apply(test_tweets_new.df, 1, function(x) get_sentiment(tolower(gsub("[()]", "", x))) )))
 
 colnames(train_tweets_new.df)[1]<- c("text")
-colnames(test_tweets_new.df)[1]<- c("text")
 
+#remove all mention of "love" from the text
 train_tweets_rmvd.df <- data.frame(sapply(train_tweets_new.df$text, function(x) gsub("love", "", tolower(x))))
+#remove all mention of "hate from the text"
 train_tweets_rmvd.df <- data.frame(sapply(train_tweets_rmvd.df, function(x) gsub("hate", "", tolower(x))))
 
-cs <- Corpus(VectorSource(train_tweets_rmvd.df[,1]))
-corpus<-tm_map(cs, removePunctuation, lazy=FALSE)
-corpus<-tm_map(corpus, stripWhitespace, lazy=FALSE)
-corpus<-tm_map(corpus, content_transformer(tolower), lazy=FALSE)
-corpus<-tm_map(corpus, removeWords, stopwords("english"), lazy=FALSE)
-corpus<-tm_map(corpus, stemDocument, lazy=FALSE)
+#data preprocessing
+create_and_process_corp <- function(data_frame) {
+  
+  cs <- Corpus(VectorSource(data_frame))
+  cs<-tm_map(cs, removePunctuation, lazy=FALSE)
+  cs<-tm_map(cs, stripWhitespace, lazy=FALSE)
+  cs<-tm_map(cs, content_transformer(tolower), lazy=FALSE)
+  cs<-tm_map(cs, removeWords, stopwords("english"), lazy=FALSE)
+  cs<-tm_map(cs, stemDocument, lazy=FALSE)
+  
+  return(cs)
+}
+corpus <- create_and_process_corp(train_tweets_rmvd.df[,1]);
 
-#train_org_class.df[, 1]
 
 tdm <- TermDocumentMatrix(corpus)
 m <- as.matrix(tdm)
 v <- sort(rowSums(m), decreasing=TRUE)
-N <- 75
+N <- 20
 head(v, N)
 features <- names(head(v,N))
-#features
 
 tdm_remsparse <- TermDocumentMatrix(corpus, control = list(dictionary = features ))
 tdm_remsp_df <- as.data.frame(as.matrix(tdm_remsparse))
 tdm_remsp_df <- t(tdm_remsp_df)
 tdm_remsp_df <- as.data.frame(tdm_remsp_df)
 tdm_remsp_df["label"]= train_org_class.df
-irisdatastream <- datastream_dataframe(data=tdm_remsp_df)
-#irisdatastream2 <- datastream_dataframe(data=tdm_remsp_df)
+trainingdatastream <- datastream_dataframe(data=tdm_remsp_df)
 
 ctrl <- MOAoptions(model = "NaiveBayes")
 mymodel <- NaiveBayes(control=ctrl)
 #mymodel
 
-myModel <- trainMOA(model = mymodel, formula=label~., data = irisdatastream, reset = FALSE, trace = TRUE)
-#myModel <- trainMOA(model = mymodel, formula=label~., data = irisdatastream2, reset = FALSE, trace = TRUE)
+myModel <- trainMOA(model = mymodel, formula=label~., data = trainingdatastream, reset = FALSE, trace = FALSE)
 
-
-test_tweets_rmvd.df <- data.frame(sapply(test_tweets_new.df$text, function(x) gsub("love", "", tolower(x))))
-test_tweets_rmvd.df <- data.frame(sapply(test_tweets_rmvd.df, function(x) gsub("hate", "", tolower(x))))
-
-cs_test <- Corpus(VectorSource(test_tweets_rmvd.df[,1]))
-corpus_test<-tm_map(cs_test, removePunctuation, lazy=FALSE)
-corpus_test<-tm_map(corpus_test, stripWhitespace, lazy=FALSE)
-corpus_test<-tm_map(corpus_test, content_transformer(tolower), lazy=FALSE)
-corpus_test<-tm_map(corpus_test, removeWords, stopwords("english"), lazy=FALSE)
-corpus_test<-tm_map(corpus_test, stemDocument, lazy=FALSE)
-
-dtm_test <- DocumentTermMatrix(corpus_test, control = list(dictionary = features))
-#inspect(dtm_test[1:50,1:20])
-dtm_test_df <- as.data.frame(as.matrix(dtm_test))
-i=1;
-nrow(dtm_test_df)
-scores = c()
-testDataStream = datastream_dataframe(data = dtm_test_df)
-#myModel <- update_model(myModel, dtm_test_df[1,], test_org_class.df[1,])
-while(testDataStream$processed < nrow(dtm_test_df) ){
-#cat("value is ", i)
-
-value <- predict(myModel, newdata=testDataStream$get_points(1), type="response")
-scores <- append(scores, value)
-
-#cat(" value ", value, "\n")
-cat(" i  ",i, "\n")
-#print(dtm_test_df[i,])
-#print(test_org_class.df[i,1])
-myModel <- update_model(myModel$model, dtm_test_df[i,], test_org_class.df[i,1], i)
-i <- i+1
-#accuracy
-#dtm_test_df = dtm_test_df[-1,]
-#which(scores=="hate")
+#Fetching, train and predict the test data set
+predict_test_data <- function(trained_model, feature_list) {
+  
+  test_tweets.df=get_love_hate_tweets(5);
+  test_tweets_new.df <- get_tweet_text(test_tweets.df);
+  
+  test_sentiment.df <- data.frame(list(apply(test_tweets_new.df, 1, function(x) get_sentiment(tolower(gsub("[()]", "", x))) )))
+  
+  colnames(test_tweets_new.df)[1]<- c("text")
+  
+  test_tweets_rmvd.df <- data.frame(sapply(test_tweets_new.df$text, function(x) gsub("love", "", tolower(x))))
+  test_tweets_rmvd.df <- data.frame(sapply(test_tweets_rmvd.df, function(x) gsub("hate", "", tolower(x))))
+  
+  corpus_test <- create_and_process_corp(test_tweets_rmvd.df[,1]);
+  
+  dtm_test <- DocumentTermMatrix(corpus_test, control = list(dictionary = feature_list))
+  
+  dtm_test_df <- as.data.frame(as.matrix(dtm_test))
+  i=1;
+  nrow(dtm_test_df)
+  scores = c()
+  testDataStream = datastream_dataframe(data = dtm_test_df)
+  
+  while(testDataStream$processed < nrow(dtm_test_df) ){
+    value <- predict(trained_model, newdata=testDataStream$get_points(1), type="response")
+    scores <- append(scores, value)
+    trained_model <- get_updated_model(trained_model$model, dtm_test_df[i,], test_sentiment.df[i,1], i)
+    i <- i+1
+  }
+  result_table=table(scores, test_sentiment.df[,1])
+  
+  accuracy=(result_table[1,1]+result_table[2,2])/(result_table[1,1]+result_table[1,2]+result_table[2,1]+result_table[2,2])
+  
+  function_output=list(model=trained_model,accuracy=accuracy)
+  
+  return(function_output)
+  #return(c(trained_model, scores, test_sentiment.df[,1]))
 }
-table(scores, test_org_class.df[,1])
 
+
+prediction_results<-predict_test_data(myModel, features)
+myModel <- prediction_results$model
+model_accuracy <-prediction_results$accuracy
+#table(results[2], results[3])
