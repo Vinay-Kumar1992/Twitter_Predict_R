@@ -42,11 +42,18 @@ train_tweets.df=get_love_hate_tweets(10);
 #data frame with the text of the tweets
 train_tweets_new.df <- get_tweet_text(train_tweets.df);
 
-love <- "love"
-hate <- "hate"
-
 #function to return the tweet's classification
-get_sentiment <- function(x) { if(str_detect(x, love)) love else hate }
+get_sentiment <- function(x) {
+  love <- "love"
+  hate <- "hate"
+  
+  if(str_detect(x, "love")) {
+    love 
+  }
+  else {
+    hate
+  }
+}
 
 #get the classification of each tweet
 train_org_class.df <- data.frame(list(apply(train_tweets_new.df, 1, function(x) get_sentiment(tolower(gsub("[()]", "", x))) )))
@@ -59,12 +66,18 @@ train_tweets_rmvd.df <- data.frame(sapply(train_tweets_new.df$text, function(x) 
 train_tweets_rmvd.df <- data.frame(sapply(train_tweets_rmvd.df, function(x) gsub(hate, "", tolower(x))))
 
 #data preprocessing
-cs <- Corpus(VectorSource(train_tweets_rmvd.df[,1]))
-corpus<-tm_map(cs, removePunctuation, lazy=FALSE)
-corpus<-tm_map(corpus, stripWhitespace, lazy=FALSE)
-corpus<-tm_map(corpus, content_transformer(tolower), lazy=FALSE)
-corpus<-tm_map(corpus, removeWords, stopwords("english"), lazy=FALSE)
-corpus<-tm_map(corpus, stemDocument, lazy=FALSE)
+create_and_process_corp <- function(data_frame) {
+  
+  cs <- Corpus(VectorSource(data_frame[,1]))
+  cs<-tm_map(cs, removePunctuation, lazy=FALSE)
+  cs<-tm_map(cs, stripWhitespace, lazy=FALSE)
+  cs<-tm_map(cs, content_transformer(tolower), lazy=FALSE)
+  cs<-tm_map(cs, removeWords, stopwords("english"), lazy=FALSE)
+  cs<-tm_map(cs, stemDocument, lazy=FALSE)
+  
+  return(cs)
+}
+cs <- create_and_process_corp(train_tweets_rmvd.df[,1]);
 
 
 tdm <- TermDocumentMatrix(corpus)
@@ -91,12 +104,7 @@ myModel <- trainMOA(model = mymodel, formula=label~., data = trainingdatastream,
 test_tweets_rmvd.df <- data.frame(sapply(test_tweets_new.df$text, function(x) gsub("love", "", tolower(x))))
 test_tweets_rmvd.df <- data.frame(sapply(test_tweets_rmvd.df, function(x) gsub("hate", "", tolower(x))))
 
-cs_test <- Corpus(VectorSource(test_tweets_rmvd.df[,1]))
-corpus_test<-tm_map(cs_test, removePunctuation, lazy=FALSE)
-corpus_test<-tm_map(corpus_test, stripWhitespace, lazy=FALSE)
-corpus_test<-tm_map(corpus_test, content_transformer(tolower), lazy=FALSE)
-corpus_test<-tm_map(corpus_test, removeWords, stopwords("english"), lazy=FALSE)
-corpus_test<-tm_map(corpus_test, stemDocument, lazy=FALSE)
+corpus_test <- create_and_process_corp(test_tweets_rmvd.df[,1]);
 
 dtm_test <- DocumentTermMatrix(corpus_test, control = list(dictionary = features))
 
