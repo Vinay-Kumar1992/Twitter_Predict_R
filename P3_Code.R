@@ -8,7 +8,7 @@ library(stringr)
 library(tm)
 #provides an interface to MOA(Massive Online Analysis) functionality from R
 library(RMOA)
-
+load(my_oauth)
 #function to accept current model, new tweet and its correct classification and return the updated model
 get_updated_model <- function(mymodel, dtm_row, row_class, i) {
   dtm_df <- as.data.frame(as.matrix(dtm_row))
@@ -25,20 +25,20 @@ get_love_hate_tweets <- function(time){
 	#data frame of tweets from the json file generated
 	tweets.df <- parseTweets("new_tweets.json", simplify = TRUE)
   file.remove("new_tweets.json")
-  
+  cat("love hate tweets recieved: ", nrow(tweets.df), "\n")
 	return(tweets.df);
 }
 
 #remove excessive white spaces,symbols and return text
 get_tweet_text <- function(tweets.df){
-	return (data.frame(str_replace_all(train_tweets.df$text,"[^[:graph:]]", " ")))
+	return (data.frame(str_replace_all(tweets.df$text,"[^[:graph:]]", " ")))
 }
 
 #Twitter AUthentication file that needs to be pregenerated. See file Generate_OAuth_Token.R
 load("my_oauth.Rdata")
 
 #data frame of tweets
-train_tweets.df=get_love_hate_tweets(10);
+train_tweets.df=get_love_hate_tweets(3);
 
 #data frame with the text of the tweets
 train_tweets_new.df <- get_tweet_text(train_tweets.df);
@@ -62,9 +62,9 @@ train_org_class.df <- data.frame(list(apply(train_tweets_new.df, 1, function(x) 
 colnames(train_tweets_new.df)[1]<- c("text")
 
 #remove all mention of "love" from the text
-train_tweets_rmvd.df <- data.frame(sapply(train_tweets_new.df$text, function(x) gsub(love, "", tolower(x))))
+train_tweets_rmvd.df <- data.frame(sapply(train_tweets_new.df$text, function(x) gsub("love", "", tolower(x))))
 #remove all mention of "hate from the text"
-train_tweets_rmvd.df <- data.frame(sapply(train_tweets_rmvd.df, function(x) gsub(hate, "", tolower(x))))
+train_tweets_rmvd.df <- data.frame(sapply(train_tweets_rmvd.df, function(x) gsub("hate", "", tolower(x))))
 
 #data preprocessing
 create_and_process_corp <- function(data_frame) {
@@ -84,7 +84,7 @@ corpus <- create_and_process_corp(train_tweets_rmvd.df[,1]);
 tdm <- TermDocumentMatrix(corpus)
 m <- as.matrix(tdm)
 v <- sort(rowSums(m), decreasing=TRUE)
-N <- 75
+N <- 30
 head(v, N)
 features <- names(head(v,N))
 
@@ -104,10 +104,12 @@ myModel <- trainMOA(model = mymodel, formula=label~., data = trainingdatastream,
 #Fetching, train and predict the test data set
 predict_test_data <- function(trained_model, feature_list) {
   
-  test_tweets.df=get_love_hate_tweets(5);
+  test_tweets.df=get_love_hate_tweets(4);
+  cat("test_tweets.df: " ,nrow(test_tweets.df), "\n")
   test_tweets_new.df <- get_tweet_text(test_tweets.df);
   
   test_sentiment.df <- data.frame(list(apply(test_tweets_new.df, 1, function(x) get_sentiment(tolower(gsub("[()]", "", x))) )))
+  cat("org sentiment: " ,nrow(test_sentiment.df), "\n")
   
   colnames(test_tweets_new.df)[1]<- c("text")
   
@@ -121,6 +123,7 @@ predict_test_data <- function(trained_model, feature_list) {
   dtm_test_df <- as.data.frame(as.matrix(dtm_test))
   i=1;
   nrow(dtm_test_df)
+  cat("nrow: ", nrow(dtm_test_df), "\n")
   scores = c()
   testDataStream = datastream_dataframe(data = dtm_test_df)
   
@@ -128,13 +131,20 @@ predict_test_data <- function(trained_model, feature_list) {
     value <- predict(trained_model, newdata=testDataStream$get_points(1), type="response")
     scores <- append(scores, value)
     trained_model <- get_updated_model(trained_model$model, dtm_test_df[i,], test_sentiment.df[i,1], i)
+    cat(i, "\n")
     i <- i+1
   }
-  table(scores, test_sentiment.df[,1])
+  result_table=table(scores, test_sentiment.df[,1])
   
-  return(trained_model)
+  accuracy=(result_table[1,1]+result_table[2,2])/(result_table[1,1]+result_table[1,2]+result_table[2,1]+result_table[2,2])
+  
+  function_output=list(model=trained_model,accuracy=accuracy)
+  
+  return(function_output)
   #return(c(trained_model, scores, test_sentiment.df[,1]))
 }
 
-myModel <- predict_test_data(myModel, features)
-#table(results[2], results[3])
+prediction_results <- predict_test_data(myModel, features)
+myModel <- prediction_results$model
+model_accuracy <-prediction_results$accuracy
+model_accuracy
