@@ -14,7 +14,7 @@ get_updated_model <- function(mymodel, dtm_row, row_class, i) {
   dtm_df <- as.data.frame(as.matrix(dtm_row))
   dtm_df[i,"label"]= row_class
   datastream <- datastream_dataframe(data=dtm_df)
-  mymodel <- trainMOA(model = mymodel, formula=label~., data = datastream, reset = FALSE, trace = TRUE)
+  mymodel <- trainMOA(model = mymodel, formula=label~., data = datastream, reset = FALSE, trace = FALSE)
   return(mymodel)
 }
 
@@ -24,7 +24,8 @@ get_love_hate_tweets <- function(time){
 	filterStream("new_tweets.json", track = c("love", "hate"), timeout = time, oauth = my_oauth)
 	#data frame of tweets from the json file generated
 	tweets.df <- parseTweets("new_tweets.json", simplify = TRUE)
-
+  file.remove("new_tweets.json")
+  
 	return(tweets.df);
 }
 
@@ -68,7 +69,7 @@ train_tweets_rmvd.df <- data.frame(sapply(train_tweets_rmvd.df, function(x) gsub
 #data preprocessing
 create_and_process_corp <- function(data_frame) {
   
-  cs <- Corpus(VectorSource(data_frame[,1]))
+  cs <- Corpus(VectorSource(data_frame))
   cs<-tm_map(cs, removePunctuation, lazy=FALSE)
   cs<-tm_map(cs, stripWhitespace, lazy=FALSE)
   cs<-tm_map(cs, content_transformer(tolower), lazy=FALSE)
@@ -77,7 +78,7 @@ create_and_process_corp <- function(data_frame) {
   
   return(cs)
 }
-cs <- create_and_process_corp(train_tweets_rmvd.df[,1]);
+corpus <- create_and_process_corp(train_tweets_rmvd.df[,1]);
 
 
 tdm <- TermDocumentMatrix(corpus)
@@ -98,27 +99,42 @@ ctrl <- MOAoptions(model = "NaiveBayes")
 mymodel <- NaiveBayes(control=ctrl)
 #mymodel
 
-myModel <- trainMOA(model = mymodel, formula=label~., data = trainingdatastream, reset = FALSE, trace = TRUE)
+myModel <- trainMOA(model = mymodel, formula=label~., data = trainingdatastream, reset = FALSE, trace = FALSE)
 
-
-test_tweets_rmvd.df <- data.frame(sapply(test_tweets_new.df$text, function(x) gsub("love", "", tolower(x))))
-test_tweets_rmvd.df <- data.frame(sapply(test_tweets_rmvd.df, function(x) gsub("hate", "", tolower(x))))
-
-corpus_test <- create_and_process_corp(test_tweets_rmvd.df[,1]);
-
-dtm_test <- DocumentTermMatrix(corpus_test, control = list(dictionary = features))
-
-dtm_test_df <- as.data.frame(as.matrix(dtm_test))
-i=1;
-nrow(dtm_test_df)
-scores = c()
-testDataStream = datastream_dataframe(data = dtm_test_df)
-
-while(testDataStream$processed < nrow(dtm_test_df) ){
-  value <- predict(myModel, newdata=testDataStream$get_points(1), type="response")
-  scores <- append(scores, value)
-  myModel <- update_model(myModel$model, dtm_test_df[i,], test_org_class.df[i,1], i)
-  i <- i+1
+#Fetching, train and predict the test data set
+predict_test_data <- function(trained_model, feature_list) {
+  
+  test_tweets.df=get_love_hate_tweets(5);
+  test_tweets_new.df <- get_tweet_text(test_tweets.df);
+  
+  test_sentiment.df <- data.frame(list(apply(test_tweets_new.df, 1, function(x) get_sentiment(tolower(gsub("[()]", "", x))) )))
+  
+  colnames(test_tweets_new.df)[1]<- c("text")
+  
+  test_tweets_rmvd.df <- data.frame(sapply(test_tweets_new.df$text, function(x) gsub("love", "", tolower(x))))
+  test_tweets_rmvd.df <- data.frame(sapply(test_tweets_rmvd.df, function(x) gsub("hate", "", tolower(x))))
+  
+  corpus_test <- create_and_process_corp(test_tweets_rmvd.df[,1]);
+  
+  dtm_test <- DocumentTermMatrix(corpus_test, control = list(dictionary = feature_list))
+  
+  dtm_test_df <- as.data.frame(as.matrix(dtm_test))
+  i=1;
+  nrow(dtm_test_df)
+  scores = c()
+  testDataStream = datastream_dataframe(data = dtm_test_df)
+  
+  while(testDataStream$processed < nrow(dtm_test_df) ){
+    value <- predict(trained_model, newdata=testDataStream$get_points(1), type="response")
+    scores <- append(scores, value)
+    trained_model <- get_updated_model(trained_model$model, dtm_test_df[i,], test_sentiment.df[i,1], i)
+    i <- i+1
+  }
+  table(scores, test_sentiment.df[,1])
+  
+  return(trained_model)
+  #return(c(trained_model, scores, test_sentiment.df[,1]))
 }
-table(scores, test_org_class.df[,1])
 
+myModel <- predict_test_data(myModel, features)
+#table(results[2], results[3])
